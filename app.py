@@ -479,6 +479,16 @@ def health_check():
         'model_loaded': model is not None,
         'tensorflow_available': TF_AVAILABLE
     })
+def initialize_backend():
+    print("Checking model file...")
+    ensure_model_file()
+    print("Loading model...")
+    load_model_from_file()
+    print("Loading food ingredients...")
+    load_food_ingredients()
+
+# Initialize at import time (works under Gunicorn/Render)
+initialize_backend()
 
 if __name__ == '__main__':
     # Local dev server
