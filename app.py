@@ -104,13 +104,7 @@ else:
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
         return response
 
-# Load model and CSV at import time so the app is ready when workers start
-print("Checking model file...")
-ensure_model_file()
-print("Loading model...")
-load_model_from_file()
-print("Loading food ingredients...")
-load_food_ingredients()
+# (Initialization moved to initialize_backend() at bottom to ensure definitions exist)
 
 # Default ingredient classes (fallback when model classes can't be detected)
 DEFAULT_INGREDIENT_CLASSES = [
