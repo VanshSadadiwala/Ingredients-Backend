@@ -1,0 +1,23 @@
+# Python cache/virtualenv
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local env files
+.env
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Large model binaries (download at runtime via MODEL_URL)
+model/*.h5
+model/*.hdf5
+model/*.keras
+model/*.pt
+model/*.onnx
+
+# Keep small metadata in repo
+!model/classes.txt
+!model/README.md
