@@ -284,6 +284,21 @@ def load_model_from_file():
         if os.path.exists(MODEL_PATH):
             print(f"Loading model from {MODEL_PATH}")
             
+            # First, try to convert the model to a more compatible format
+            if convert_model_to_compatible_format():
+                saved_model_path = MODEL_PATH.replace('.h5', '_savedmodel')
+                if os.path.exists(saved_model_path):
+                    print(f"🔄 Trying to load converted model from {saved_model_path}")
+                    try:
+                        model = tf.saved_model.load(saved_model_path)
+                        print("✅ Converted model loaded successfully!")
+                        return model
+                    except Exception as e:
+                        print(f"❌ Converted model loading failed: {e}")
+                        print("🔄 Falling back to original model loading attempts...")
+            
+            # Continue with original loading attempts
+            
             # Try loading with custom objects to handle compatibility issues
             try:
                 # First attempt: load with comprehensive custom objects for compatibility
@@ -423,6 +438,62 @@ def load_model_from_file():
     except Exception as e:
         print(f"Error loading model: {e}")
         return None
+
+def create_compatible_input_layer():
+    """Create a compatible InputLayer that handles batch_shape issues."""
+    if not TF_AVAILABLE:
+        return None
+    
+    class CompatibleInputLayer(tf.keras.layers.InputLayer):
+        @classmethod
+        def from_config(cls, config):
+            # Remove problematic batch_shape parameter
+            if 'batch_shape' in config:
+                print("🔧 Removing batch_shape from InputLayer config for compatibility")
+                config = config.copy()
+                del config['batch_shape']
+            return super().from_config(config)
+    
+    return CompatibleInputLayer
+
+def convert_model_to_compatible_format():
+    """Convert model to a more compatible format."""
+    if not TF_AVAILABLE:
+        print("❌ TensorFlow not available for model conversion")
+        return False
+    
+    try:
+        print("🔄 Attempting to convert model to compatible format...")
+        
+        # Create compatible InputLayer
+        CompatibleInputLayer = create_compatible_input_layer()
+        if CompatibleInputLayer is None:
+            return False
+        
+        # Try to load the model with compatible custom objects
+        try:
+            # Load with compatible custom objects
+            compatible_custom_objects = {
+                'InputLayer': CompatibleInputLayer,
+            }
+            
+            # Try to load and save in a more compatible format
+            temp_model = load_model(MODEL_PATH, custom_objects=compatible_custom_objects, compile=False)
+            
+            # Save as SavedModel format (more compatible)
+            saved_model_path = MODEL_PATH.replace('.h5', '_savedmodel')
+            temp_model.save(saved_model_path, save_format='tf')
+            
+            print(f"✅ Model converted and saved to: {saved_model_path}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Model conversion failed: {e}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error in model conversion: {e}")
+        return False
 
 def create_placeholder_model():
     """Placeholder model creation removed. Provide a real model at MODEL_PATH."""
