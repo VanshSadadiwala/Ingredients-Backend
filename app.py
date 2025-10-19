@@ -282,12 +282,14 @@ def load_model_from_file():
             
             # Try loading with custom objects to handle compatibility issues
             try:
-                # First attempt: load with custom objects for InputLayer compatibility
+                # First attempt: load with comprehensive custom objects for compatibility
                 custom_objects = {
-                    'InputLayer': tf.keras.layers.InputLayer
+                    'InputLayer': tf.keras.layers.InputLayer,
+                    'DTypePolicy': tf.keras.mixed_precision.Policy,
+                    'mixed_float16': tf.keras.mixed_precision.Policy('mixed_float16')
                 }
                 model = load_model(MODEL_PATH, custom_objects=custom_objects)
-                print("Model loaded successfully with custom objects!")
+                print("Model loaded successfully with comprehensive custom objects!")
             except Exception as e1:
                 print(f"First loading attempt failed: {e1}")
                 try:
@@ -299,14 +301,16 @@ def load_model_from_file():
                     try:
                         # Third attempt: load with custom_objects and compile=False
                         custom_objects = {
-                            'InputLayer': tf.keras.layers.InputLayer
+                            'InputLayer': tf.keras.layers.InputLayer,
+                            'DTypePolicy': tf.keras.mixed_precision.Policy,
+                            'mixed_float16': tf.keras.mixed_precision.Policy('mixed_float16')
                         }
                         model = load_model(MODEL_PATH, custom_objects=custom_objects, compile=False)
                         print("Model loaded successfully with custom objects and compile=False!")
                     except Exception as e3:
                         print(f"Third loading attempt failed: {e3}")
                         try:
-                            # Fourth attempt: monkey patch InputLayer to handle batch_shape issue
+                            # Fourth attempt: monkey patch InputLayer and handle dtype issues
                             original_from_config = tf.keras.layers.InputLayer.from_config
                             
                             def patched_from_config(config):
@@ -327,8 +331,38 @@ def load_model_from_file():
                                 tf.keras.layers.InputLayer.from_config = original_from_config
                                 
                         except Exception as e4:
-                            print(f"All loading attempts failed. Last error: {e4}")
-                            raise e4
+                            print(f"Fourth loading attempt failed: {e4}")
+                            try:
+                                # Fifth attempt: comprehensive patching for both InputLayer and dtype issues
+                                original_from_config = tf.keras.layers.InputLayer.from_config
+                                
+                                def patched_from_config(config):
+                                    # Remove batch_shape if it exists and is causing issues
+                                    if 'batch_shape' in config:
+                                        print("Removing batch_shape from InputLayer config for compatibility")
+                                        config = config.copy()
+                                        del config['batch_shape']
+                                    return original_from_config(config)
+                                
+                                # Patch InputLayer
+                                tf.keras.layers.InputLayer.from_config = patched_from_config
+                                
+                                # Set up custom objects for dtype policy
+                                custom_objects = {
+                                    'DTypePolicy': tf.keras.mixed_precision.Policy,
+                                    'mixed_float16': tf.keras.mixed_precision.Policy('mixed_float16')
+                                }
+                                
+                                try:
+                                    model = load_model(MODEL_PATH, custom_objects=custom_objects, compile=False)
+                                    print("Model loaded successfully with comprehensive patching!")
+                                finally:
+                                    # Restore original method
+                                    tf.keras.layers.InputLayer.from_config = original_from_config
+                                    
+                            except Exception as e5:
+                                print(f"All loading attempts failed. Last error: {e5}")
+                                raise e5
             
             # Detect and update ingredient classes from the model
             detect_model_classes(model)
