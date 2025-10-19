@@ -269,7 +269,7 @@ def detect_model_classes(model):
         return ingredient_classes
 
 def load_model_from_file():
-    """Load the trained model."""
+    """Load the trained model with compatibility handling."""
     global model
     
     if not TF_AVAILABLE:
@@ -279,8 +279,56 @@ def load_model_from_file():
     try:
         if os.path.exists(MODEL_PATH):
             print(f"Loading model from {MODEL_PATH}")
-            model = load_model(MODEL_PATH)
-            print("Model loaded successfully!")
+            
+            # Try loading with custom objects to handle compatibility issues
+            try:
+                # First attempt: load with custom objects for InputLayer compatibility
+                custom_objects = {
+                    'InputLayer': tf.keras.layers.InputLayer
+                }
+                model = load_model(MODEL_PATH, custom_objects=custom_objects)
+                print("Model loaded successfully with custom objects!")
+            except Exception as e1:
+                print(f"First loading attempt failed: {e1}")
+                try:
+                    # Second attempt: load with compile=False to avoid compilation issues
+                    model = load_model(MODEL_PATH, compile=False)
+                    print("Model loaded successfully with compile=False!")
+                except Exception as e2:
+                    print(f"Second loading attempt failed: {e2}")
+                    try:
+                        # Third attempt: load with custom_objects and compile=False
+                        custom_objects = {
+                            'InputLayer': tf.keras.layers.InputLayer
+                        }
+                        model = load_model(MODEL_PATH, custom_objects=custom_objects, compile=False)
+                        print("Model loaded successfully with custom objects and compile=False!")
+                    except Exception as e3:
+                        print(f"Third loading attempt failed: {e3}")
+                        try:
+                            # Fourth attempt: monkey patch InputLayer to handle batch_shape issue
+                            original_from_config = tf.keras.layers.InputLayer.from_config
+                            
+                            def patched_from_config(config):
+                                # Remove batch_shape if it exists and is causing issues
+                                if 'batch_shape' in config:
+                                    print("Removing batch_shape from InputLayer config for compatibility")
+                                    config = config.copy()
+                                    del config['batch_shape']
+                                return original_from_config(config)
+                            
+                            tf.keras.layers.InputLayer.from_config = patched_from_config
+                            
+                            try:
+                                model = load_model(MODEL_PATH, compile=False)
+                                print("Model loaded successfully with patched InputLayer!")
+                            finally:
+                                # Restore original method
+                                tf.keras.layers.InputLayer.from_config = original_from_config
+                                
+                        except Exception as e4:
+                            print(f"All loading attempts failed. Last error: {e4}")
+                            raise e4
             
             # Detect and update ingredient classes from the model
             detect_model_classes(model)
