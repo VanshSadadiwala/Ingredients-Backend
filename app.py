@@ -24,7 +24,7 @@ try:
     from tensorflow.keras.applications.resnet50 import preprocess_input
     TF_AVAILABLE = True
 except ImportError:
-    print("Warning: TensorFlow not available. Using mock predictions.")
+    print("❌ Warning: TensorFlow not available. Model loading will fail.")
     TF_AVAILABLE = False
 
 app = Flask(__name__)
@@ -79,14 +79,14 @@ def ensure_model_file():
         return True
     model_url = os.environ.get(MODEL_URL_ENV)
     if not model_url:
-        print(f"⚠️  {MODEL_PATH} not found and {MODEL_URL_ENV} env var is not set. Using mock predictions.")
+        print(f"⚠️  {MODEL_PATH} not found and {MODEL_URL_ENV} env var is not set. Model will not be available.")
         return False
     print(f"⬇️  Downloading model from {model_url} -> {MODEL_PATH}")
     ok = download_file(model_url, MODEL_PATH)
     if ok:
         print("✅ Model downloaded successfully")
     else:
-        print("❌ Model download failed; continuing without a model")
+        print("❌ Model download failed; model will not be available")
     return ok
 
 # Enable CORS at import time so it works under Gunicorn/Render
@@ -141,40 +141,44 @@ def load_food_ingredients():
     global food_ingredients_df
     csv_file = 'food_ingredients.csv'
     
-    if os.path.exists(csv_file):
-        try:
-            # Read CSV using csv module for better control
-            import csv
-            cleaned_data = []
-            
-            with open(csv_file, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                header = next(reader)  # Skip header
+    try:
+        if os.path.exists(csv_file):
+            try:
+                # Read CSV using csv module for better control
+                import csv
+                cleaned_data = []
                 
-                for row in reader:
-                    if len(row) >= 2 and row[0].strip():  # Ensure we have dish name and at least one ingredient
-                        dish_name = row[0].strip()
-                        # All remaining columns are ingredients
-                        ingredients = [ing.strip() for ing in row[1:] if ing.strip()]
-                        
-                        if ingredients:
-                            cleaned_data.append({
-                                'Dish Name': dish_name,
-                                'Ingredients': ', '.join(ingredients)
-                            })
-            
-            food_ingredients_df = pd.DataFrame(cleaned_data)
-            
-            print(f"✅ Loaded food ingredients from {csv_file}")
-            print(f"   Found {len(food_ingredients_df)} dishes with ingredients")
-            print(f"   Sample dishes: {list(food_ingredients_df['Dish Name'].head())}")
-            return food_ingredients_df
-        except Exception as e:
-            print(f"⚠️  Error reading {csv_file}: {e}")
-    else:
-        print(f"⚠️  {csv_file} not found. Ingredient lookup will not be available.")
-    
-    return None
+                with open(csv_file, 'r', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    header = next(reader)  # Skip header
+                    
+                    for row in reader:
+                        if len(row) >= 2 and row[0].strip():  # Ensure we have dish name and at least one ingredient
+                            dish_name = row[0].strip()
+                            # All remaining columns are ingredients
+                            ingredients = [ing.strip() for ing in row[1:] if ing.strip()]
+                            
+                            if ingredients:
+                                cleaned_data.append({
+                                    'Dish Name': dish_name,
+                                    'Ingredients': ', '.join(ingredients)
+                                })
+                
+                food_ingredients_df = pd.DataFrame(cleaned_data)
+                
+                print(f"✅ Loaded food ingredients from {csv_file}")
+                print(f"   Found {len(food_ingredients_df)} dishes with ingredients")
+                print(f"   Sample dishes: {list(food_ingredients_df['Dish Name'].head())}")
+                return food_ingredients_df
+            except Exception as e:
+                print(f"⚠️  Error reading {csv_file}: {e}")
+        else:
+            print(f"⚠️  {csv_file} not found. Ingredient lookup will not be available.")
+        
+        return None
+    except Exception as e:
+        print(f"❌ Error in load_food_ingredients: {e}")
+        return None
 
 def get_dish_ingredients(dish_name):
     """Get ingredients for a specific dish from the CSV."""
@@ -273,7 +277,7 @@ def load_model_from_file():
     global model
     
     if not TF_AVAILABLE:
-        print("TensorFlow not available - using mock model")
+        print("❌ TensorFlow not available - cannot load model")
         return None
     
     try:
@@ -361,11 +365,56 @@ def load_model_from_file():
                                     tf.keras.layers.InputLayer.from_config = original_from_config
                                     
                             except Exception as e5:
-                                print(f"All loading attempts failed. Last error: {e5}")
-                                raise e5
+                                print(f"Fifth loading attempt failed: {e5}")
+                                try:
+                                    # Sixth attempt: handle shape compatibility issues
+                                    print("Attempting to load model with shape compatibility fixes...")
+                                    
+                                    # Try to load with safe_mode to handle compatibility issues
+                                    try:
+                                        model = load_model(MODEL_PATH, safe_mode=True, compile=False)
+                                        print("Model loaded successfully with safe_mode!")
+                                    except Exception as safe_error:
+                                        print(f"Safe mode loading failed: {safe_error}")
+                                        
+                                        # Final attempt: try to load weights only and reconstruct model
+                                        print("Attempting to load model weights and reconstruct...")
+                                        try:
+                                            # This is a more aggressive approach - load the model structure
+                                            # and then load weights separately
+                                            import h5py
+                                            
+                                            with h5py.File(MODEL_PATH, 'r') as f:
+                                                print("Model file structure:")
+                                                def print_structure(name, obj):
+                                                    print(f"  {name}: {type(obj).__name__}")
+                                                f.visititems(print_structure)
+                                            
+                                            # Try loading with minimal custom objects
+                                            minimal_custom_objects = {
+                                                'InputLayer': tf.keras.layers.InputLayer,
+                                            }
+                                            
+                                            model = load_model(MODEL_PATH, custom_objects=minimal_custom_objects, compile=False)
+                                            print("Model loaded successfully with minimal custom objects!")
+                                            
+                                        except Exception as final_error:
+                                            print(f"Final loading attempt failed: {final_error}")
+                                            print("⚠️  Model loading failed completely. Model will not be available.")
+                                            model = None
+                                            
+                                except Exception as e6:
+                                    print(f"All loading attempts failed. Last error: {e6}")
+                                    print("⚠️  Model loading failed completely. Model will not be available.")
+                                    model = None
             
             # Detect and update ingredient classes from the model
-            detect_model_classes(model)
+            if model is not None:
+                detect_model_classes(model)
+            else:
+                print("⚠️  Model is None, using default ingredient classes")
+                global ingredient_classes
+                ingredient_classes = DEFAULT_INGREDIENT_CLASSES.copy()
             
             return model
         else:
@@ -399,7 +448,7 @@ def preprocess_image(image):
         if TF_AVAILABLE:
             img_array = preprocess_input(img_array)
         else:
-            # Simple normalization for mock predictions
+            # Simple normalization when TF not available
             img_array = img_array.astype(np.float32) / 255.0
         
         return img_array
@@ -407,40 +456,14 @@ def preprocess_image(image):
         print(f"Error preprocessing image: {e}")
         return None
 
-def predict_ingredients_mock(image_array):
-    """Generate mock predictions for demonstration."""
-    # Generate random predictions that sum to 1
-    np.random.seed(42)  # For consistent results
-    predictions = np.random.random(len(ingredient_classes))
-    predictions = predictions / np.sum(predictions)
-    
-    # Get top 5 predictions
-    top_indices = np.argsort(predictions)[-5:][::-1]
-    
-    results = []
-    for idx in top_indices:
-        confidence = float(predictions[idx])
-        if confidence > 0.05:  # Only show predictions above 5% confidence
-            dish_name = ingredient_classes[idx]
-            dish_ingredients = get_dish_ingredients(dish_name)
-            
-            print(f"🍽️  Mock prediction: {dish_name} ({confidence:.2%}) - {len(dish_ingredients)} ingredients")
-            
-            results.append({
-                'ingredient': dish_name,
-                'confidence': confidence,
-                'ingredients': dish_ingredients
-            })
-    
-    return results
 
 def predict_ingredients(image_array):
     """Predict ingredients from preprocessed image."""
     global model
     
     if model is None:
-        print("Model not loaded, using mock predictions")
-        return predict_ingredients_mock(image_array)
+        print("❌ Model not loaded - cannot make predictions")
+        raise RuntimeError("Model is not loaded. Cannot make predictions.")
     
     try:
         # Make prediction
@@ -473,8 +496,8 @@ def predict_ingredients(image_array):
         
         return results
     except Exception as e:
-        print(f"Error making prediction: {e}")
-        return predict_ingredients_mock(image_array)
+        print(f"❌ Error making prediction: {e}")
+        raise RuntimeError(f"Prediction failed: {e}")
 
 # Note: When serving a standalone static frontend (e.g., GitHub Pages),
 # you may not need the '/' route at all. Keeping it for local dev.
@@ -526,13 +549,17 @@ def predict():
                 return jsonify({'error': 'Error preprocessing image'}), 500
             
             # Make prediction
-            predictions = predict_ingredients(processed_image)
-            
-            # Return results
-            resp = jsonify({'success': True, 'predictions': predictions})
-            # Ensure CORS header present even without flask-cors
-            resp.headers['Access-Control-Allow-Origin'] = '*'
-            return resp
+            try:
+                predictions = predict_ingredients(processed_image)
+                
+                # Return results
+                resp = jsonify({'success': True, 'predictions': predictions})
+                # Ensure CORS header present even without flask-cors
+                resp.headers['Access-Control-Allow-Origin'] = '*'
+                return resp
+            except RuntimeError as e:
+                print(f"❌ Prediction failed: {e}")
+                return jsonify({'error': 'Model not available. Cannot make predictions.'}), 503
         else:
             return jsonify({'error': 'Invalid file type'}), 400
             
@@ -550,18 +577,28 @@ def get_menu():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
-    return jsonify({
-        'status': 'healthy',
-        'model_loaded': model is not None,
-        'tensorflow_available': TF_AVAILABLE
-    })
+    if model is None:
+        return jsonify({
+            'status': 'unhealthy',
+            'model_loaded': False,
+            'tensorflow_available': TF_AVAILABLE,
+            'error': 'Model not loaded - predictions unavailable'
+        }), 503
+    else:
+        return jsonify({
+            'status': 'healthy',
+            'model_loaded': True,
+            'tensorflow_available': TF_AVAILABLE
+        })
 def initialize_backend():
+    print("🚀 Initializing IngredientWale Backend...")
     print("Checking model file...")
     ensure_model_file()
     print("Loading model...")
     load_model_from_file()
     print("Loading food ingredients...")
     load_food_ingredients()
+    print("✅ Backend initialization complete")
 
 # Initialize at import time (works under Gunicorn/Render)
 initialize_backend()
